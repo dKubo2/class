@@ -13,52 +13,93 @@ Name:Daiki Kubo
 """
 
 #文字列データをダミー変数化
-def transDummy(data):
+def transDummy(idx, data, x):
 	#Position
-	dum_posi=pd.DataFrame(pd.get_dummies(data['Position']))
-	dum_posi.columns=['Infielder','Fielder','Pitcher','Catcher']
-	data=pd.concat([data,dum_posi],axis=1,join_axes=[data.index])
-	#Team
-	dum_team=pd.DataFrame(pd.get_dummies(data['Team']))
-	dum_team.columns=['Fighters','Swallows','Eagles','Hawks','Giants','Tigers']
-	data=pd.concat([data,dum_team],axis=1,join_axes=[data.index])
-#	PitchArm
-	dum_arm=pd.DataFrame(pd.get_dummies(data['PitchArm']))
-	dum_arm.columns=['RightArm','LeftArm']
-	data=pd.concat([data,dum_arm],axis=1,join_axes=[data.index])
-#	SwingArm
-	dum_swing=pd.DataFrame(pd.get_dummies(data['SwingArm']))
-	dum_swing.columns=['DoubleSwing','RightSwing','LeftSwing']
-	data=pd.concat([data,dum_swing],axis=1,join_axes=[data.index])
-	#League
-	dum_league=pd.DataFrame(pd.get_dummies(data['League']))
-	dum_league.columns=['Se_League','Pa_League']
-	data=pd.concat([data,dum_league],axis=1,join_axes=[data.index])	
-	return data
+	dum_posi=pd.DataFrame(pd.get_dummies(data[idx]))
+	# dum_posi.columns=['Infielder','Fielder','Pitcher','Catcher']
+	# x=pd.concat([x,dum_posi],axis=1,join_axes=[x.index])
+	x = pd.concat([x,dum_posi],axis=1)
+	# print x
+	return x
 
-print 'importing data ....'
-labels=['Number','Name','Position','Birthday','Height','Weight','PitchArm','SwingArm','League','Team']
-data=pd.read_table('./training_data.tsv',names=labels)
-data=transDummy(data)
-x=pd.DataFrame(data,columns=['Height','Weight','Infielder','Fielder','Pitcher','Catcher',
-										'Fighters','Swallows','Eagles','Hawks','Giants','Tigers',
-										'RightArm','LeftArm','Se_League','Pa_League',
-										'DoubleSwing','RightSwing','LeftSwing'])
-y=pd.Series(data['Name'])
+def genDTC(x, y, max_depth, random_state, criterion):
+	clf = tree.DecisionTreeClassifier(criterion=criterion, max_depth=max_depth, random_state=random_state)
+	return clf.fit(x, y)
 
-#決定木の分類器をCARTアルゴリズムで作成
-print 'make decision tree ....'
-clf=tree.DecisionTreeClassifier()
-clf=clf.fit(x,y)
-dot_data = StringIO()
-tree.export_graphviz(clf, out_file=dot_data,feature_names=x.columns)
-graph = pydotplus.graph_from_dot_data(dot_data.getvalue())
-graph.write_pdf("akinator_graph.pdf")
+def graph(clf, categories, fname):
+	dot_data = StringIO()
+	tree.export_graphviz(clf, out_file=dot_data,feature_names=categories)
+	graph = pydotplus.graph_from_dot_data(dot_data.getvalue())
+	graph.write_pdf(fname)
 
-#モデルを用いて予測を実行する
-print 'evaluate model ....'
-predicted = clf.predict(x)
-#識別率を確認
-result = sum(predicted == y) / len(y)
-#result=1となった
-print result
+
+def genQustion(category):
+	print '> 「' + category + '」に関連していますか? (はい / いいえ)'
+	# print '> 「' + category + '」に関連していますか? (はい / いいえ / ひとつ戻る)'
+
+def getResponse():
+	return raw_input()
+
+def printTargets(rest_targets, targets):
+	print '----------------------'
+	for idx in rest_targets:
+		print targets[idx]
+	print '----------------------'
+
+
+def dialogue(clf, categories, targets, leafidx):
+	position = [0]
+	while position[-1] not in leafidx:
+		genQustion(categories[clf.tree_.feature[position[-1]]])
+		response = getResponse()
+		if response == 'はい':
+			position.append(clf.tree_.children_right[position[-1]])
+		elif response == 'いいえ':
+			position.append(clf.tree_.children_left[position[-1]])
+		# elif response == '一つ戻る':
+		# 	position.pop()
+		# else:
+		# 	print '「はい」もしくは「いいえ」でお願いします。。！	'
+
+		# 結果の表示
+		if clf.tree_.n_node_samples[position[-1]] < 10:
+			rest_targets = [i for i, v in enumerate(clf.tree_.value[position[-1]][0]) if v == 1]
+			printTargets(rest_targets, targets)
+
+
+if __name__ == '__main__':
+	labels = ['Number','Name','Position','Birthday','Height','Weight','PitchArm','SwingArm','League','Team']
+	x = pd.DataFrame()
+	data = pd.read_table('./training_data.tsv',names=labels)
+	# data=transDummy(data)
+	# for idx in ['Position', 'Team', 'PitchArm', 'SwingArm', 'League']:
+	for idx in ['Position', 'Team', 'SwingArm', 'League']:
+		x = transDummy(idx, data, x)
+
+	y = pd.Series(data['Name'])
+
+	# 決定木の分類器をCARTアルゴリズムで作成
+	# clf = genDTC(x, y, max_depth=15, random_state=31, criterion='gini')
+	clf = genDTC(x, y, max_depth=25, random_state=31, criterion='entropy')
+
+	# # 決定木可視化
+	graph(clf, x.columns, "akinator_graph.pdf")
+
+	leafidx = [i for i, v in enumerate(clf.tree_.feature) if v == -2]	# リーフのインデックス取得
+	# leafsamples = [clf.tree_.n_node_samples[idx] for idx in leafidx]
+
+	# # インタラクション開始
+	dialogue(clf, x.columns, y, leafidx)
+
+	# print clf
+	# print x
+	# predicted = clf.predict(x)
+	# print predicted
+
+	# #モデルを用いて予測を実行する
+	# print 'evaluate model ....'
+	# #識別率を確認
+	# result = sum(predicted == y) / len(y)
+	# #result=1となった
+	# print result
+
